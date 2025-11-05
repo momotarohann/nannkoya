@@ -30,7 +30,7 @@ let sessionEndTime = null;
 let questionTimes = []; // 問題ごとの所要時間を記録
 let lastQuestionTime = null; // 最後の問題の開始時刻
 let sessionWrongCounts = {}; // 一回のセッションでの間違い数を追跡
-let debug = false;
+let debug = false; // デバッグフラグ（開発用、本番ではfalse）
 let dataJsonFileHandle = null; // data.jsonのファイルハンドルを保持（互換性のため残す）
 let lastDebugSaveTime = Date.now(); // 最後にdebug.jsonを保存した時刻
 let lastDebugLogCount = 0; // 最後に保存した時のログ数
@@ -46,6 +46,30 @@ async function readJsonFile(fileName, fileHandleKey, skipPicker = false) {
   
   try {
     const protocol = window.location.protocol;
+    
+    // HTTP/HTTPSプロトコルの場合はlocalStorageから読み込み
+    if (protocol === 'https:' || protocol === 'http:') {
+      log(`HTTP/HTTPSプロトコル: localStorageから${fileName}を読み込み`);
+      
+      const storageKey = `localStorage_${fileHandleKey}`;
+      const storedData = localStorage.getItem(storageKey);
+      
+      if (storedData && storedData.trim().length > 0) {
+        try {
+          const data = JSON.parse(storedData);
+          log(`${fileName}をlocalStorageから読み込み: 成功`);
+          return data;
+        } catch (parseError) {
+          log(`localStorageのJSON解析エラー: ${parseError.message}`);
+          return null;
+        }
+      } else {
+        log(`localStorageに${fileName}が見つかりません`);
+        return null;
+      }
+    }
+    
+    // file://プロトコルの場合
     
     // まずファイルハンドルがあるかチェック
     let fileHandle = fileHandles[fileHandleKey];
@@ -136,6 +160,38 @@ async function writeJsonFile(fileName, fileHandleKey, data) {
     
     // 保存するデータにタイムスタンプを追加
     data.lastUpdated = new Date().toISOString();
+    
+    // HTTP/HTTPSプロトコルの場合はlocalStorageに保存
+    if (protocol === 'https:' || protocol === 'http:') {
+      log(`HTTP/HTTPSプロトコル: localStorageに${fileName}を保存`);
+      
+      const storageKey = `localStorage_${fileHandleKey}`;
+      
+      // 既存データを読み込んでマージ
+      const existingData = localStorage.getItem(storageKey);
+      if (existingData && existingData.trim().length > 0) {
+        try {
+          const parsedExisting = JSON.parse(existingData);
+          const mergedData = mergeJsonData(fileName, parsedExisting, data);
+          data = mergedData;
+          log(`${fileName}のlocalStorageデータをマージしました`);
+        } catch (parseError) {
+          log(`既存データのJSON解析エラー: ${parseError.message} - 新しいデータで上書きします`);
+        }
+      }
+      
+      // localStorageに保存
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(data));
+        log(`${fileName}をlocalStorageに保存: 成功`);
+        return true;
+      } catch (storageError) {
+        log(`localStorage保存エラー: ${storageError.message}`);
+        return false;
+      }
+    }
+    
+    // file://プロトコルの場合
     
     let fileHandle = fileHandles[fileHandleKey];
     
@@ -364,6 +420,23 @@ async function setupAllFileHandles() {
   log(`=== ファイルハンドル一括取得開始 ===`);
   
   try {
+    const protocol = window.location.protocol;
+    
+    // HTTP/HTTPSプロトコルの場合は警告を表示
+    if (protocol === 'https:' || protocol === 'http:') {
+      alert(
+        'HTTP/HTTPSプロトコルではファイルハンドル設定は不要です。\n\n' +
+        'データは自動的にlocalStorageに保存されます。\n\n' +
+        '※ settings.json: 常に保存\n' +
+        '※ progress.json: 常に保存\n' +
+        '※ sessions.json: 常に保存\n' +
+        '※ data.json: 常に保存\n' +
+        '※ debug.json: デバッグモードON時のみlocalStorageキャッシュに保存'
+      );
+      log(`HTTP/HTTPSプロトコル: ファイルハンドル設定をスキップ（localStorage使用）`);
+      return false;
+    }
+    
     if (!window.showOpenFilePicker) {
       log(`File System Access APIがサポートされていません`);
       return false;
@@ -372,7 +445,7 @@ async function setupAllFileHandles() {
     // プロトコルに応じたメッセージ
     let confirmMessage = 'JSONファイルの自動保存を有効にしますか？\n\n';
     
-    if (window.location.protocol === 'file:') {
+    if (protocol === 'file:') {
       confirmMessage += 
         '【重要】同じフォルダ内のJSONファイルを選択してください\n\n' +
         '選択するファイル（同じフォルダ内）：\n' +
@@ -576,7 +649,9 @@ async function saveSettings(settings) {
 
 // 全体設定を読み込んでUIに反映する関数
 async function loadGlobalSettings() {
-  showDebugInfo('=== 全体設定を読み込み中 ===');
+  if (debugMode) {
+    showDebugInfo('=== 全体設定を読み込み中 ===');
+  }
   
   const settings = await loadSettings(true);
   
@@ -647,12 +722,16 @@ async function loadGlobalSettings() {
     debugInfoCountValueDisplay.textContent = debugInfoCountValue;
   }
   
-  showDebugInfo('全体設定の読み込み完了');
+  if (debugMode) {
+    showDebugInfo('全体設定の読み込み完了');
+  }
 }
 
 // 全体設定を保存する関数
 async function saveGlobalSettings() {
-  showDebugInfo('=== 全体設定を保存中 ===');
+  if (debugMode) {
+    showDebugInfo('=== 全体設定を保存中 ===');
+  }
   
   // UI要素から値を取得
   const volumeSlider = document.getElementById('volumeSlider');
@@ -692,10 +771,12 @@ async function saveGlobalSettings() {
   // settings.jsonに保存
   await saveSettings(settings);
   
-  showDebugInfo('全体設定を保存しました');
-  showDebugInfo(`音量: ${(settings.speechVolume * 100).toFixed(0)}%, 速度: ${settings.speechRate.toFixed(1)}x`);
-  showDebugInfo(`初期設定: 新出${settings.defaultNewWordCount}, 復習${settings.defaultReviewWordCount}, フォント${settings.defaultQuestionFontSize}px`);
-  showDebugInfo(`デバッグ情報表示数: ${settings.debugInfoMaxCount}件`);
+  if (debugMode) {
+    showDebugInfo('全体設定を保存しました');
+    showDebugInfo(`音量: ${(settings.speechVolume * 100).toFixed(0)}%, 速度: ${settings.speechRate.toFixed(1)}x`);
+    showDebugInfo(`初期設定: 新出${settings.defaultNewWordCount}, 復習${settings.defaultReviewWordCount}, フォント${settings.defaultQuestionFontSize}px`);
+    showDebugInfo(`デバッグ情報表示数: ${settings.debugInfoMaxCount}件`);
+  }
 }
 
 // 進捗データを読み込む
@@ -727,9 +808,9 @@ if (debug) {
   debugMode = false;
 }
 
-// プロトコルの確認とメッセージ表示
-showDebugInfo(`実行プロトコル: ${window.location.protocol}`);
-showDebugInfo(`JSONファイル読み込みを初期化します`);
+// プロトコルの確認（コンソールログのみ）
+console.log(`[初期化] 実行プロトコル: ${window.location.protocol}`);
+console.log(`[初期化] JSONファイル読み込みを初期化します`);
 
 // XPシステム
 let totalXP = 0;
@@ -900,7 +981,9 @@ window.showPassword = function() {
 
 // 管理者デバッグの値を読み込む関数
 async function loadAdminDebugValues() {
-  showDebugInfo('=== 管理者デバッグ値を読み込み中 ===');
+  if (debugMode) {
+    showDebugInfo('=== 管理者デバッグ値を読み込み中 ===');
+  }
   
   // XP・レベル
   const adminTotalXP = document.getElementById('adminTotalXP');
@@ -925,7 +1008,9 @@ async function loadAdminDebugValues() {
   // 単語リストを更新
   updateAdminWordList();
   
-  showDebugInfo('管理者デバッグ値の読み込み完了');
+  if (debugMode) {
+    showDebugInfo('管理者デバッグ値の読み込み完了');
+  }
 }
 
 // 単語リストを更新する関数
@@ -937,7 +1022,9 @@ function updateAdminWordList() {
   // 単語帳が読み込まれていない場合
   if (!allWords || allWords.length === 0) {
     adminWordSelect.innerHTML = '<option value="">単語帳を読み込んでください</option>';
-    showDebugInfo('単語リスト更新: 単語帳未読み込み');
+    if (debugMode) {
+      showDebugInfo('単語リスト更新: 単語帳未読み込み');
+    }
     return;
   }
   
@@ -951,7 +1038,9 @@ function updateAdminWordList() {
     adminWordSelect.appendChild(option);
   });
   
-  showDebugInfo(`単語リスト更新: ${allWords.length}個の単語`);
+  if (debugMode) {
+    showDebugInfo(`単語リスト更新: ${allWords.length}個の単語`);
+  }
 }
 
 // 管理者編集をdebug.jsonに記録する関数
@@ -993,8 +1082,9 @@ async function saveAdminEditToDebugJson(editType, oldValue, newValue, details = 
     // localStorageに保存
     localStorage.setItem('debugData', JSON.stringify(debugData));
     
-    // ファイルにも保存
-    if (fileHandles.debug) {
+    // ファイルにも保存（HTTP/HTTPSプロトコル以外）
+    const protocol = window.location.protocol;
+    if (protocol !== 'https:' && protocol !== 'http:' && fileHandles.debug) {
       try {
         const writable = await fileHandles.debug.createWritable();
         await writable.write(JSON.stringify(debugData, null, 2));
@@ -1004,9 +1094,13 @@ async function saveAdminEditToDebugJson(editType, oldValue, newValue, details = 
       } catch (error) {
         console.error('debug.json保存エラー:', error);
       }
+    } else if (protocol === 'https:' || protocol === 'http:') {
+      console.log(`[管理者編集] HTTP/HTTPSプロトコル: localStorageキャッシュのみに保存`);
     }
     
-    showDebugInfo(`管理者編集を記録: ${editType}`);
+    if (debugMode) {
+      showDebugInfo(`管理者編集を記録: ${editType}`);
+    }
     
   } catch (error) {
     console.error('管理者編集記録エラー:', error);
@@ -1086,6 +1180,9 @@ window.addEventListener('DOMContentLoaded', async function() {
       document.getElementById('fileInput').click();
     };
   }
+  // 起動時にdata.csvを自動読み込み
+  await autoLoadDataCsvOnStartup();
+  
   // 初回ロード時にメニュー画面表示
   await showMenuScreen();
   
@@ -1111,25 +1208,31 @@ window.addEventListener('DOMContentLoaded', async function() {
           if (success) {
             // 設定完了フラグを保存
             localStorage.setItem('fileHandlesConfigured', 'true');
-            showDebugInfo('ファイルハンドル設定完了フラグを保存しました');
+            if (debugMode) {
+              showDebugInfo('ファイルハンドル設定完了フラグを保存しました');
+            }
             
             // 設定完了後にメニュー画面を更新
             await showMenuScreen();
           }
         } else {
-          showDebugInfo('ファイルハンドル設定をスキップしました。後から設定できます。');
+          if (debugMode) {
+            showDebugInfo('ファイルハンドル設定をスキップしました。後から設定できます。');
+          }
           // スキップした場合もフラグを保存（次回から聞かない）
           localStorage.setItem('fileHandlesConfigured', 'skipped');
         }
       }, 1000);
     } else {
-      showDebugInfo(`ファイルハンドル設定済み（フラグ: ${fileHandlesConfigured}）`);
+      if (debugMode) {
+        showDebugInfo(`ファイルハンドル設定済み（フラグ: ${fileHandlesConfigured}）`);
+      }
       
       // スキップされていた場合で、まだファイルハンドルが設定されていない場合
       if (fileHandlesConfigured === 'skipped') {
         const hasAnyFileHandle = Object.values(fileHandles).some(handle => handle !== null);
-        if (!hasAnyFileHandle) {
-          showDebugInfo('ファイルハンドルが未設定です。「⚙️ 設定」→「📁 ファイルハンドルを設定」で設定できます。');
+        if (!hasAnyFileHandle && debugMode) {
+          showDebugInfo('ファイルハンドルが未設定です。「⚙️ 設定」→「高度な設定」→「📁 ファイルハンドルを設定」で設定できます。');
         }
       }
     }
@@ -1281,7 +1384,9 @@ window.addEventListener('DOMContentLoaded', function() {
       if (advancedSettingsEnabled) {
         advancedSettings.style.display = 'none';
         advancedSettingsEnabled = false;
-        showDebugInfo('高度な設定を非表示にしました');
+        if (debugMode) {
+          showDebugInfo('高度な設定を非表示にしました');
+        }
         return;
       }
       
@@ -1296,7 +1401,7 @@ window.addEventListener('DOMContentLoaded', function() {
       const forbiddenChars = /["',.;:!#$%&()=~|`{+*}<>?_/\\\]\[@\-^\)]/;
       if (forbiddenChars.test(password)) {
         alert('パスワードに使用できない文字が含まれています。\n使用できない文字: " \' , . ; : ! # $ % & ( ) = ~ | ` { + * } < > ? _ / \\ ] [ @ - ^');
-        showDebugInfo('パスワード入力エラー: 禁止文字が含まれています');
+        console.log('パスワード入力エラー: 禁止文字が含まれています');
         return;
       }
       
@@ -1304,10 +1409,12 @@ window.addEventListener('DOMContentLoaded', function() {
       if (password === debugpswd) {
         advancedSettings.style.display = 'block';
         advancedSettingsEnabled = true;
-        showDebugInfo('高度な設定を表示しました');
+        if (debugMode) {
+          showDebugInfo('高度な設定を表示しました');
+        }
       } else {
         alert('パスワードが正しくありません。');
-        showDebugInfo('高度な設定: パスワード認証失敗');
+        console.log('高度な設定: パスワード認証失敗');
       }
     };
   }
@@ -1320,7 +1427,9 @@ window.addEventListener('DOMContentLoaded', function() {
       if (advancedSettings) {
         advancedSettings.style.display = 'none';
         advancedSettingsEnabled = false;
-        showDebugInfo('高度な設定を非表示にしました');
+        if (debugMode) {
+          showDebugInfo('高度な設定を非表示にしました');
+        }
       }
     };
   }
@@ -1347,7 +1456,8 @@ window.addEventListener('DOMContentLoaded', function() {
         if (forbiddenChars.test(password)) {
           alert('パスワードに使用できない文字が含まれています。\n使用できない文字: " \' , . ; : ! # $ % & ( ) = ~ | ` { + * } < > ? _ / \\ ] [ @ - ^');
           this.checked = debugMode;
-          showDebugInfo('パスワード入力エラー: 禁止文字が含まれています');
+          // デバッグモードOFF時はshowDebugInfoを呼ばない
+          console.log('パスワード入力エラー: 禁止文字が含まれています');
           return;
         }
         
@@ -1358,12 +1468,18 @@ window.addEventListener('DOMContentLoaded', function() {
         } else {
           alert('パスワードが正しくありません。');
           this.checked = debugMode; // 元に戻す
-          showDebugInfo('デバッグモード有効化: パスワード認証失敗');
+          // デバッグモードOFF時はshowDebugInfoを呼ばない
+          console.log('デバッグモード有効化: パスワード認証失敗');
         }
       } else {
         // デバッグモードを無効にする場合はパスワード不要
+        // 無効化する前に最後のメッセージを記録
+        const wasDebugMode = debugMode;
         await setDebugMode(false);
-        showDebugInfo('デバッグモードを無効にしました');
+        
+        if (wasDebugMode) {
+          console.log('デバッグモードを無効にしました');
+        }
       }
     };
   }
@@ -1376,7 +1492,9 @@ window.addEventListener('DOMContentLoaded', function() {
       const volume = parseInt(this.value);
       volumeValue.textContent = volume;
       speechVolume = volume / 100;
-      showDebugInfo(`音量を${volume}%に設定しました`);
+      if (debugMode) {
+        showDebugInfo(`音量を${volume}%に設定しました`);
+      }
     };
   }
   
@@ -1388,7 +1506,9 @@ window.addEventListener('DOMContentLoaded', function() {
       const rate = parseInt(this.value) / 10; // 1-20 → 0.1-2.0
       rateValue.textContent = rate.toFixed(1);
       speechRate = rate;
-      showDebugInfo(`速度を${rate.toFixed(1)}xに設定しました`);
+      if (debugMode) {
+        showDebugInfo(`速度を${rate.toFixed(1)}xに設定しました`);
+      }
     };
   }
   
@@ -1408,7 +1528,9 @@ window.addEventListener('DOMContentLoaded', function() {
       debugInfoCountValue.textContent = clampedValue;
       debugInfoMaxCount = clampedValue;
       
-      showDebugInfo(`デバッグ情報表示数を${clampedValue}件に変更しました`);
+      if (debugMode) {
+        showDebugInfo(`デバッグ情報表示数を${clampedValue}件に変更しました`);
+      }
     };
     
     // 入力ボックス操作時
@@ -1428,7 +1550,9 @@ window.addEventListener('DOMContentLoaded', function() {
         debugInfoCountValue.textContent = clampedValue;
         debugInfoMaxCount = clampedValue;
         
-        showDebugInfo(`デバッグ情報表示数を${clampedValue}件に変更しました`);
+        if (debugMode) {
+          showDebugInfo(`デバッグ情報表示数を${clampedValue}件に変更しました`);
+        }
       }
     };
     
@@ -1472,7 +1596,9 @@ window.addEventListener('DOMContentLoaded', function() {
       if (success) {
         // 設定完了フラグを保存
         localStorage.setItem('fileHandlesConfigured', 'true');
-        showDebugInfo('ファイルハンドルの設定が完了しました');
+        if (debugMode) {
+          showDebugInfo('ファイルハンドルの設定が完了しました');
+        }
         
         // ステータス表示を更新
         updateFileHandleStatus();
@@ -1503,7 +1629,9 @@ window.addEventListener('DOMContentLoaded', function() {
         // フラグをクリア
         localStorage.removeItem('fileHandlesConfigured');
         
-        showDebugInfo('ファイルハンドルの設定をリセットしました');
+        if (debugMode) {
+          showDebugInfo('ファイルハンドルの設定をリセットしました');
+        }
         
         // ステータス表示を更新
         updateFileHandleStatus();
@@ -1525,11 +1653,15 @@ window.addEventListener('DOMContentLoaded', function() {
       if (hasAnyFileHandle || configured === 'true') {
         fileHandleStatus.style.display = 'block';
         setupFilesBtn.textContent = '📁 ファイルハンドルを再設定';
-        showDebugInfo('ファイルハンドル状態: 設定済み');
+        if (debugMode) {
+          showDebugInfo('ファイルハンドル状態: 設定済み');
+        }
       } else {
         fileHandleStatus.style.display = 'none';
         setupFilesBtn.textContent = '📁 ファイルハンドルを設定';
-        showDebugInfo('ファイルハンドル状態: 未設定');
+        if (debugMode) {
+          showDebugInfo('ファイルハンドル状態: 未設定');
+        }
       }
     }
   };
@@ -1563,7 +1695,10 @@ window.addEventListener('DOMContentLoaded', function() {
         return;
       }
       
-      showDebugInfo('=== 設定をリセット中 ===');
+      const wasDebugMode = debugMode;
+      if (wasDebugMode) {
+        showDebugInfo('=== 設定をリセット中 ===');
+      }
       
       // デフォルト設定を作成
       const defaultSettings = {
@@ -1611,7 +1746,7 @@ window.addEventListener('DOMContentLoaded', function() {
       // デバッグ情報の表示を更新
       updateDebugInfoVisibility();
       
-      showDebugInfo('設定をリセットしました');
+      console.log('設定をリセットしました');
       alert('設定をデフォルト値にリセットしました');
     };
   }
@@ -1881,6 +2016,45 @@ window.addEventListener('DOMContentLoaded', function() {
   if (downloadDebugBtn) {
     downloadDebugBtn.onclick = async () => {
       try {
+        const protocol = window.location.protocol;
+        
+        // HTTP/HTTPSプロトコルの場合はlocalStorage（キャッシュ）から読み込んでダウンロード
+        if (protocol === 'https:' || protocol === 'http:') {
+          // localStorageからデバッグデータを取得（キャッシュとして使用）
+          const debugData = localStorage.getItem('debugData');
+          if (!debugData || debugData.trim().length === 0) {
+            alert('デバッグデータがありません。\n\n※ HTTP/HTTPSプロトコルでは、デバッグ情報はlocalStorageにキャッシュとして保存されます。');
+            return;
+          }
+          
+          let finalDebugData = { logs: [] };
+          try {
+            finalDebugData = JSON.parse(debugData);
+          } catch (parseError) {
+            console.error('debugDataのJSON解析エラー:', parseError);
+            finalDebugData = { logs: [] };
+          }
+          
+          // ブラウザのダウンロード機能を使用
+          const blob = new Blob([JSON.stringify(finalDebugData, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = 'debug.json';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          
+          if (debugMode) {
+            showDebugInfo(`debug.jsonをダウンロードしました（${finalDebugData.logs.length}件）`);
+          }
+          alert(`debug.jsonをダウンロードしました（${finalDebugData.logs.length}件のログ）\n\n※ HTTP/HTTPSプロトコル: localStorageキャッシュから取得`);
+          return;
+        }
+        
+        // file://プロトコルの場合
+        
         // localStorageからデバッグデータを取得
         const debugData = localStorage.getItem('debugData');
         if (!debugData || debugData.trim().length === 0) {
@@ -2102,123 +2276,380 @@ function updateInitialDisplay() {
 
 function updateDebugInfoVisibility() {
   const debugInfo = document.getElementById("debugInfo");
-  if (debugInfo) debugInfo.style.display = debugMode ? "block" : "none";
+  if (debugInfo) {
+    debugInfo.style.display = debugMode ? "block" : "none";
+    
+    // デバッグモードがOFFの場合は、デバッグコンテンツも完全にクリア
+    if (!debugMode) {
+      const debugContent = document.getElementById("debugContent");
+      if (debugContent) {
+        debugContent.innerHTML = '';
+      }
+    }
+  }
 }
 
 async function handleFile(event) {
-  showDebugInfo(`=== handleFile呼び出し ===`);
-  showDebugInfo(`event.target: ${event.target}`);
-  showDebugInfo(`event.target.files: ${event.target.files}`);
-  showDebugInfo(`event.target.files.length: ${event.target.files ? event.target.files.length : 'なし'}`);
+  if (debugMode) {
+    showDebugInfo(`=== handleFile呼び出し ===`);
+    showDebugInfo(`event.target: ${event.target}`);
+    showDebugInfo(`event.target.files: ${event.target.files}`);
+    showDebugInfo(`event.target.files.length: ${event.target.files ? event.target.files.length : 'なし'}`);
+  }
   
-  const file = event.target.files[0];
+  const files = event.target.files;
   
-  if (!file) {
-    showDebugInfo("エラー: ファイルが選択されていません");
+  if (!files || files.length === 0) {
+    if (debugMode) {
+      showDebugInfo("エラー: ファイルが選択されていません");
+    }
     alert("ファイルを選択してください");
     return;
   }
   
-  showDebugInfo(`ファイル選択: ${file.name} (${file.size} bytes)`);
+  if (debugMode) {
+    showDebugInfo(`${files.length}個のファイルが選択されました`);
+  }
   
-  const reader = new FileReader();
+  let addedCount = 0;
+  let skippedCount = 0;
+  let errorCount = 0;
   
-  reader.onload = async (e) => {
-    showDebugInfo("ファイル読み込み完了");
-    const content = e.target.result;
-    showDebugInfo(`ファイル内容: ${content.substring(0, 50)}...`);
+  // 全ての選択されたファイルを処理
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
     
-    // 履歴に追加
-    showDebugInfo(`履歴に追加を開始: ${file.name}`);
-    await addHistoryEntry(file.name, content);
-    showDebugInfo(`履歴に追加完了: ${file.name}`);
-
-    const lines = content.split("\n").map(line => line.trim()).filter(line => line);
-    showDebugInfo(`読み込まれた行数: ${lines.length}`);
-    
-    allWords = lines.map((line, index) => {
-      const parts = line.split(",");
-      const question = parts[0];
-      const answer = parts[1];
-      const reading = parts[2]; // 3つ目があれば読み上げ用
-      if (!question || !answer) {
-        showDebugInfo(`警告: 行 ${index + 1} の形式が正しくありません: ${line}`);
-        return null;
-      }
-      // 読み上げがあれば追加
-      return reading !== undefined
-        ? { question: question.trim(), answer: answer.trim(), reading: reading.trim() }
-        : { question: question.trim(), answer: answer.trim() };
-    }).filter(word => word !== null);
-    
-    showDebugInfo(`有効な単語数: ${allWords.length}`);
-    
-    if (allWords.length === 0) {
-      showDebugInfo("エラー: 有効なデータが見つかりませんでした");
-      alert("有効なデータが見つかりませんでした。CSVファイルの形式を確認してください。\n形式: 問題,答え");
-      return;
+    if (debugMode) {
+      showDebugInfo(`ファイル${i + 1}/${files.length}: ${file.name} (${file.size} bytes)`);
     }
     
-    // 同じフォルダ内の他のCSVファイルを自動検出
-    showDebugInfo(`CSV自動検出を開始`);
-    await detectAndAddOtherCsvFiles(file);
-    showDebugInfo(`CSV自動検出完了`);
-    
-    // クイズは開始せず、メニュー画面を更新して表示する
+    try {
+      const content = await readFileAsText(file);
+      
+      if (debugMode) {
+        showDebugInfo(`ファイル読み込み完了: ${file.name}`);
+      }
+      
+      const lines = content.split("\n").map(line => line.trim()).filter(line => line);
+      if (debugMode) {
+        showDebugInfo(`読み込まれた行数: ${lines.length}`);
+      }
+      
+      const words = lines.map((line, index) => {
+        const parts = line.split(",");
+        const question = parts[0];
+        const answer = parts[1];
+        const reading = parts[2];
+        if (!question || !answer) {
+          if (debugMode) {
+            showDebugInfo(`警告: ${file.name} 行 ${index + 1} の形式が正しくありません`);
+          }
+          return null;
+        }
+        return reading !== undefined
+          ? { question: question.trim(), answer: answer.trim(), reading: reading.trim() }
+          : { question: question.trim(), answer: answer.trim() };
+      }).filter(word => word !== null);
+      
+      if (words.length === 0) {
+        if (debugMode) {
+          showDebugInfo(`エラー: ${file.name} に有効なデータが見つかりませんでした`);
+        }
+        errorCount++;
+        continue;
+      }
+      
+      // ハッシュをチェック
+      const hash = hashString(content);
+      const list = await getHistoryList();
+      const existing = list.find(e => e.hash === hash);
+      
+      if (!existing) {
+        // 履歴に追加
+        await addHistoryEntry(file.name, content);
+        addedCount++;
+        if (debugMode) {
+          showDebugInfo(`追加: ${file.name} (${words.length}個の単語)`);
+        }
+        
+        // 最後のファイルの場合はallWordsに設定
+        if (i === files.length - 1) {
+          allWords = words;
+        }
+      } else {
+        skippedCount++;
+        if (debugMode) {
+          showDebugInfo(`スキップ (既存): ${file.name}`);
+        }
+      }
+      
+    } catch (error) {
+      if (debugMode) {
+        showDebugInfo(`ファイル読み込みエラー (${file.name}): ${error.message}`);
+      }
+      errorCount++;
+    }
+  }
+  
+  // 結果を表示
+  let resultMessage = '';
+  if (addedCount > 0) {
+    resultMessage += `${addedCount}個のCSVファイルを読み込みました。`;
+  }
+  if (skippedCount > 0) {
+    resultMessage += `\n${skippedCount}個のファイルは既に読み込まれています。`;
+  }
+  if (errorCount > 0) {
+    resultMessage += `\n${errorCount}個のファイルでエラーが発生しました。`;
+  }
+  
+  if (resultMessage) {
+    alert(resultMessage);
+  }
+  
+  // ファイルを手動で選択した場合、自動読み込みフラグを設定
+  autoLoadCsvAttempted = true;
+  
+  // メニュー画面を更新して表示
+  if (debugMode) {
     showDebugInfo(`メニュー画面を表示します`);
-    await showMenuScreen();
+  }
+  await showMenuScreen();
+  if (debugMode) {
     showDebugInfo(`メニュー画面の表示完了`);
-    
-    // ファイル入力をリセット（次回も同じファイルを選択できるように）
-    event.target.value = '';
+  }
+  
+  // ファイル入力をリセット
+  event.target.value = '';
+  if (debugMode) {
     showDebugInfo(`ファイル入力をリセットしました`);
-  };
-  
-  reader.onerror = (error) => {
-    showDebugInfo(`エラー: ファイル読み込みに失敗 - ${error}`);
-    alert("ファイルの読み込みに失敗しました");
-  };
-  
-  showDebugInfo(`FileReaderでファイルを読み込み開始: ${file.name}`);
-  reader.readAsText(file, 'UTF-8');
+  }
 }
 
-// 同じフォルダ内の他のCSVファイルを検出して自動追加する関数
-// 単語帳が一つもない場合に同じフォルダ内のCSVファイルを自動読み込み
-async function autoLoadCsvFilesFromFolder() {
-  showDebugInfo(`=== CSVファイル自動読み込み開始 ===`);
-  
+// FileReaderをPromiseでラップする補助関数
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = (error) => reject(error);
+    reader.readAsText(file, 'UTF-8');
+  });
+}
+
+// 起動時に同じフォルダ内のdata.csvを自動読み込みする関数
+async function autoLoadDataCsvOnStartup() {
   try {
-    // File System Access APIがサポートされているかチェック
-    if (!window.showDirectoryPicker) {
-      showDebugInfo(`Directory Picker APIがサポートされていません: スキップ`);
-      return 0;
+    // 履歴があるかチェック
+    const list = await getHistoryList();
+    if (list.length > 0) {
+      // 既に履歴がある場合は何もしない
+      console.log('[autoLoadDataCsvOnStartup] 履歴が既に存在するため、自動読み込みをスキップ');
+      return;
     }
     
     const protocol = window.location.protocol;
     
-    // HTTPプロトコルの場合はスキップ
-    if (protocol === 'http:' || protocol === 'https:') {
-      showDebugInfo(`HTTPプロトコル: CSVファイルの自動読み込みをスキップ`);
+    // file://プロトコルの場合のみ実行
+    if (protocol !== 'file:') {
+      console.log('[autoLoadDataCsvOnStartup] file://プロトコル以外のため、スキップ');
+      return;
+    }
+    
+    if (!window.showOpenFilePicker) {
+      console.log('[autoLoadDataCsvOnStartup] File System Access APIがサポートされていません');
+      return;
+    }
+    
+    try {
+      // data.csvを開く
+      const [fileHandle] = await window.showOpenFilePicker({
+        types: [{
+          description: 'CSV files',
+          accept: { 'text/csv': ['.csv'] }
+        }],
+        suggestedName: 'data.csv'
+      });
+      
+      console.log(`[autoLoadDataCsvOnStartup] ファイルを選択: ${fileHandle.name}`);
+      
+      // ファイルを読み込み
+      const file = await fileHandle.getFile();
+      const content = await file.text();
+      
+      // 履歴に追加
+      const hash = hashString(content);
+      const existingList = await getHistoryList();
+      const existing = existingList.find(e => e.hash === hash);
+      
+      if (!existing) {
+        await addHistoryEntry(file.name, content);
+        console.log(`[autoLoadDataCsvOnStartup] data.csvを追加しました`);
+      }
+      
+      // data.csvと同じフォルダ内の他のCSVファイルも読み込み
+      // FileHandleからディレクトリハンドルを取得する方法がないため、
+      // ユーザーにフォルダ選択を求める
+      const shouldLoadOthers = confirm(
+        'data.csvを読み込みました。\n\n' +
+        '同じフォルダ内の他のCSVファイルも読み込みますか？\n\n' +
+        '「OK」: 同じフォルダを選択して全CSVを読み込み\n' +
+        '「キャンセル」: data.csvのみ使用'
+      );
+      
+      if (shouldLoadOthers) {
+        const dirHandle = await window.showDirectoryPicker();
+        console.log(`[autoLoadDataCsvOnStartup] フォルダを選択: ${dirHandle.name}`);
+        
+        let addedCount = 0;
+        for await (const entry of dirHandle.values()) {
+          if (entry.kind === 'file' && entry.name.endsWith('.csv')) {
+            try {
+              const csvFile = await entry.getFile();
+              const csvContent = await csvFile.text();
+              
+              const csvHash = hashString(csvContent);
+              const currentList = await getHistoryList();
+              const csvExisting = currentList.find(e => e.hash === csvHash);
+              
+              if (!csvExisting) {
+                await addHistoryEntry(csvFile.name, csvContent);
+                addedCount++;
+                console.log(`[autoLoadDataCsvOnStartup] 追加: ${csvFile.name}`);
+              }
+            } catch (error) {
+              console.log(`[autoLoadDataCsvOnStartup] ファイル読み込みエラー (${entry.name}): ${error.message}`);
+            }
+          }
+        }
+        
+        console.log(`[autoLoadDataCsvOnStartup] ${addedCount}個の追加CSVファイルを読み込みました`);
+      }
+      
+      // フラグを設定（メニュー画面での自動読み込みボタンを非表示にする）
+      autoLoadCsvAttempted = true;
+      
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.log('[autoLoadDataCsvOnStartup] ファイル/フォルダ選択がキャンセルされました');
+      } else {
+        console.log(`[autoLoadDataCsvOnStartup] エラー: ${error.message}`);
+      }
+    }
+  } catch (error) {
+    console.log(`[autoLoadDataCsvOnStartup] 予期しないエラー: ${error.message}`);
+  }
+}
+
+// 同じフォルダ内の他のCSVファイルを検出して自動追加する関数
+// 単語帳が一つもない場合に同じフォルダ内のCSVファイルを自動読み込み
+// 注意: この関数は必ずユーザージェスチャー（ボタンクリックなど）のコンテキスト内で呼ばれること
+async function autoLoadCsvFilesFromFolder() {
+  if (debugMode) {
+    showDebugInfo(`=== CSVファイル自動読み込み開始 ===`);
+  }
+  
+  try {
+    const protocol = window.location.protocol;
+    
+    // HTTP/HTTPSプロトコルの場合は複数ファイル選択を使用
+    if (protocol === 'https:' || protocol === 'http:') {
+      if (debugMode) {
+        showDebugInfo(`HTTP/HTTPSプロトコル: 複数ファイル選択を使用`);
+      }
+      
+      // File System Access APIのサポートチェック
+      if (!window.showOpenFilePicker) {
+        alert('File System Access APIがサポートされていません。\n手動でファイルを1つずつ選択してください。');
+        return 0;
+      }
+      
+      try {
+        // 複数のCSVファイルを選択
+        const fileHandles = await window.showOpenFilePicker({
+          types: [{
+            description: 'CSV files',
+            accept: { 'text/csv': ['.csv'] }
+          }],
+          multiple: true
+        });
+        
+        if (debugMode) {
+          showDebugInfo(`${fileHandles.length}個のファイルが選択されました`);
+        }
+        
+        let addedCount = 0;
+        let skippedCount = 0;
+        
+        for (const handle of fileHandles) {
+          try {
+            const file = await handle.getFile();
+            const content = await file.text();
+            
+            // ハッシュをチェック
+            const hash = hashString(content);
+            const list = await getHistoryList();
+            const existing = list.find(e => e.hash === hash);
+            
+            if (!existing) {
+              await addHistoryEntry(file.name, content);
+              addedCount++;
+              if (debugMode) {
+                showDebugInfo(`追加: ${file.name}`);
+              }
+            } else {
+              skippedCount++;
+              if (debugMode) {
+                showDebugInfo(`スキップ (既存): ${file.name}`);
+              }
+            }
+          } catch (fileError) {
+            if (debugMode) {
+              showDebugInfo(`ファイル読み込みエラー (${handle.name}): ${fileError.message}`);
+            }
+          }
+        }
+        
+        if (debugMode) {
+          showDebugInfo(`=== CSV読み込み完了: ${addedCount}件追加, ${skippedCount}件スキップ ===`);
+        }
+        
+        if (addedCount > 0) {
+          alert(`${addedCount}件のCSVファイルを読み込みました`);
+        } else if (skippedCount > 0) {
+          alert(`${skippedCount}件のCSVファイルが見つかりましたが、既に読み込まれています。`);
+        } else {
+          alert('有効なCSVファイルが見つかりませんでした。');
+        }
+        
+        return addedCount;
+        
+      } catch (pickerError) {
+        if (pickerError.name === 'AbortError') {
+          // キャンセル時は何もしない
+          return 0;
+        } else {
+          if (debugMode) {
+            showDebugInfo(`ファイル選択エラー: ${pickerError.message}`);
+          }
+          return 0;
+        }
+      }
+    }
+    
+    // file://プロトコルの場合はDirectory Pickerを使用
+    if (!window.showDirectoryPicker) {
+      alert('Directory Picker APIがサポートされていません。\n手動でファイルを選択してください。');
+      if (debugMode) {
+        showDebugInfo(`Directory Picker APIがサポートされていません: スキップ`);
+      }
       return 0;
     }
     
-    // ユーザーに確認（自動検出のため、よりわかりやすいメッセージ）
-    const shouldScan = confirm(
-      '単語帳の履歴がありません。\n\n' +
-      '同じフォルダ内のCSVファイルを自動的に読み込みますか？\n\n' +
-      '「OK」: フォルダを選択して全てのCSVファイルを読み込み\n' +
-      '「キャンセル」: 手動でファイルを選択'
-    );
-    
-    if (!shouldScan) {
-      showDebugInfo(`ユーザーがCSV自動読み込みをキャンセルしました`);
-      return 0;
-    }
-    
-    // ディレクトリを選択
+    // ディレクトリを選択（ユーザージェスチャーのコンテキスト内で実行される）
     const dirHandle = await window.showDirectoryPicker();
-    showDebugInfo(`ディレクトリを選択: ${dirHandle.name}`);
+    if (debugMode) {
+      showDebugInfo(`ディレクトリを選択: ${dirHandle.name}`);
+    }
     
     let addedCount = 0;
     let skippedCount = 0;
@@ -2226,7 +2657,9 @@ async function autoLoadCsvFilesFromFolder() {
     // ディレクトリ内のファイルを走査
     for await (const entry of dirHandle.values()) {
       if (entry.kind === 'file' && entry.name.endsWith('.csv')) {
-        showDebugInfo(`CSVファイル発見: ${entry.name}`);
+        if (debugMode) {
+          showDebugInfo(`CSVファイル発見: ${entry.name}`);
+        }
         
         try {
           const file = await entry.getFile();
@@ -2241,67 +2674,101 @@ async function autoLoadCsvFilesFromFolder() {
             // 新規CSVファイルを追加
             await addHistoryEntry(entry.name, content);
             addedCount++;
-            showDebugInfo(`追加: ${entry.name}`);
+            if (debugMode) {
+              showDebugInfo(`追加: ${entry.name}`);
+            }
           } else {
             skippedCount++;
-            showDebugInfo(`スキップ (既存): ${entry.name}`);
+            if (debugMode) {
+              showDebugInfo(`スキップ (既存): ${entry.name}`);
+            }
           }
         } catch (fileError) {
-          showDebugInfo(`ファイル読み込みエラー (${entry.name}): ${fileError.message}`);
+          if (debugMode) {
+            showDebugInfo(`ファイル読み込みエラー (${entry.name}): ${fileError.message}`);
+          }
         }
       }
     }
     
-    showDebugInfo(`=== CSV自動読み込み完了: ${addedCount}件追加, ${skippedCount}件スキップ ===`);
+    if (debugMode) {
+      showDebugInfo(`=== CSV自動読み込み完了: ${addedCount}件追加, ${skippedCount}件スキップ ===`);
+    }
     
     if (addedCount > 0) {
       alert(`${addedCount}件のCSVファイルを自動的に読み込みました`);
+    } else if (skippedCount > 0) {
+      alert(`${skippedCount}件のCSVファイルが見つかりましたが、既に読み込まれています。`);
     } else {
-      showDebugInfo(`読み込めるCSVファイルはありませんでした`);
+      alert('CSVファイルが見つかりませんでした。');
     }
     
     return addedCount;
     
   } catch (error) {
     if (error.name === 'AbortError') {
-      showDebugInfo(`ディレクトリ選択がキャンセルされました`);
+      if (debugMode) {
+        showDebugInfo(`ディレクトリ/ファイル選択がキャンセルされました`);
+      }
+      // キャンセル時はアラートを表示しない
+    } else if (error.message.includes('user gesture')) {
+      alert('エラー: この操作はユーザーの操作（ボタンクリックなど）に直接応答して実行する必要があります。\nもう一度ボタンをクリックしてください。');
+      if (debugMode) {
+        showDebugInfo(`ユーザージェスチャーエラー: ${error.message}`);
+      }
     } else {
-      showDebugInfo(`CSV自動読み込みエラー: ${error.message}`);
+      alert(`エラーが発生しました: ${error.message}`);
+      if (debugMode) {
+        showDebugInfo(`CSV自動読み込みエラー: ${error.message}`);
+      }
     }
     return 0;
   }
 }
 
 // 同じフォルダ内の他のCSVファイルを検出して自動追加する関数
+// file://プロトコル専用（https://では使用しない）
 async function detectAndAddOtherCsvFiles(selectedFile) {
-  showDebugInfo(`=== 同じフォルダ内のCSVファイル自動検出開始 ===`);
+  if (debugMode) {
+    showDebugInfo(`=== 同じフォルダ内のCSVファイル自動検出開始 ===`);
+  }
   
   try {
-    // File System Access APIがサポートされているかチェック
-    if (!window.showDirectoryPicker) {
-      showDebugInfo(`Directory Picker APIがサポートされていません: スキップ`);
-      return;
-    }
-    
     const protocol = window.location.protocol;
     
-    // HTTPプロトコルの場合はスキップ
-    if (protocol === 'http:' || protocol === 'https:') {
-      showDebugInfo(`HTTPプロトコル: CSVファイルの自動検出をスキップ`);
+    // HTTP/HTTPSプロトコルの場合はスキップ（単独ファイル選択のため）
+    if (protocol === 'https:' || protocol === 'http:') {
+      if (debugMode) {
+        showDebugInfo(`HTTP/HTTPSプロトコル: CSVファイルの自動検出をスキップ（単独ファイル選択モード）`);
+      }
       return;
     }
+    
+    // File System Access APIがサポートされているかチェック
+    if (!window.showDirectoryPicker) {
+      if (debugMode) {
+        showDebugInfo(`Directory Picker APIがサポートされていません: スキップ`);
+      }
+      return;
+    }
+    
+    // file://プロトコルのみ実行
     
     // ユーザーに確認
     const shouldScan = confirm('同じフォルダ内の他のCSVファイルを自動的に履歴に追加しますか？\n\n「OK」: フォルダを選択して自動追加\n「キャンセル」: スキップ');
     
     if (!shouldScan) {
-      showDebugInfo(`ユーザーがCSV自動追加をキャンセルしました`);
+      if (debugMode) {
+        showDebugInfo(`ユーザーがCSV自動追加をキャンセルしました`);
+      }
       return;
     }
     
     // ディレクトリを選択
     const dirHandle = await window.showDirectoryPicker();
-    showDebugInfo(`ディレクトリを選択: ${dirHandle.name}`);
+    if (debugMode) {
+      showDebugInfo(`ディレクトリを選択: ${dirHandle.name}`);
+    }
     
     let addedCount = 0;
     let skippedCount = 0;
@@ -2309,7 +2776,9 @@ async function detectAndAddOtherCsvFiles(selectedFile) {
     // ディレクトリ内のファイルを走査
     for await (const entry of dirHandle.values()) {
       if (entry.kind === 'file' && entry.name.endsWith('.csv')) {
-        showDebugInfo(`CSVファイル発見: ${entry.name}`);
+        if (debugMode) {
+          showDebugInfo(`CSVファイル発見: ${entry.name}`);
+        }
         
         try {
           const file = await entry.getFile();
@@ -2324,32 +2793,44 @@ async function detectAndAddOtherCsvFiles(selectedFile) {
             // 新規CSVファイルを追加
             await addHistoryEntry(entry.name, content);
             addedCount++;
-            showDebugInfo(`追加: ${entry.name}`);
+            if (debugMode) {
+              showDebugInfo(`追加: ${entry.name}`);
+            }
           } else {
             skippedCount++;
-            showDebugInfo(`スキップ (既存): ${entry.name}`);
+            if (debugMode) {
+              showDebugInfo(`スキップ (既存): ${entry.name}`);
+            }
           }
         } catch (fileError) {
-          showDebugInfo(`ファイル読み込みエラー (${entry.name}): ${fileError.message}`);
+          if (debugMode) {
+            showDebugInfo(`ファイル読み込みエラー (${entry.name}): ${fileError.message}`);
+          }
         }
       }
     }
     
-    showDebugInfo(`=== CSV自動追加完了: ${addedCount}件追加, ${skippedCount}件スキップ ===`);
+    if (debugMode) {
+      showDebugInfo(`=== CSV自動追加完了: ${addedCount}件追加, ${skippedCount}件スキップ ===`);
+    }
     
     if (addedCount > 0) {
       alert(`${addedCount}件のCSVファイルを履歴に追加しました`);
       // メニュー画面を更新
       await showMenuScreen();
-    } else {
+    } else if (skippedCount > 0 && debugMode) {
       showDebugInfo(`新しいCSVファイルはありませんでした`);
     }
     
   } catch (error) {
     if (error.name === 'AbortError') {
-      showDebugInfo(`ディレクトリ選択がキャンセルされました`);
+      if (debugMode) {
+        showDebugInfo(`ディレクトリ選択がキャンセルされました`);
+      }
     } else {
-      showDebugInfo(`CSV自動検出エラー: ${error.message}`);
+      if (debugMode) {
+        showDebugInfo(`CSV自動検出エラー: ${error.message}`);
+      }
     }
   }
 }
@@ -2929,14 +3410,17 @@ function shuffle(arr) {
 }
 
 function showDebugInfo(message) {
-  // デバッグモードでなくてもdebug.jsonに保存
-  saveDebugToJson(message);
-  
   // コンソールログは常に出力
   console.log(message);
   
+  // デバッグモードがONの場合のみdebug.jsonに保存
+  if (debugMode) {
+    saveDebugToJson(message);
+  }
+  
   // デバッグモードの場合のみUIに表示
   if (!debugMode) return;
+  
   const debugInfo = document.getElementById("debugInfo");
   const debugContent = document.getElementById("debugContent");
   
@@ -3020,52 +3504,61 @@ function saveDebugToJson(message) {
       }
     }
     
-    // debug.jsonファイルとしてダウンロード可能にする
-    try {
-      const debugJson = JSON.stringify(debugData, null, 2);
-      const blob = new Blob([debugJson], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      
-      // 既存のダウンロードリンクを更新
-      let debugLink = document.getElementById('debugDownloadLink');
-      if (!debugLink) {
-        debugLink = document.createElement('a');
-        debugLink.id = 'debugDownloadLink';
-        debugLink.style.display = 'none';
-        document.body.appendChild(debugLink);
+    // HTTPSプロトコル以外の場合のみファイル保存を試行
+    const protocol = window.location.protocol;
+    
+    if (protocol !== 'https:') {
+      // debug.jsonファイルとしてダウンロード可能にする
+      try {
+        const debugJson = JSON.stringify(debugData, null, 2);
+        const blob = new Blob([debugJson], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        // 既存のダウンロードリンクを更新
+        let debugLink = document.getElementById('debugDownloadLink');
+        if (!debugLink) {
+          debugLink = document.createElement('a');
+          debugLink.id = 'debugDownloadLink';
+          debugLink.style.display = 'none';
+          document.body.appendChild(debugLink);
+        }
+        
+        debugLink.href = url;
+        debugLink.download = 'debug.json';
+      } catch (blobError) {
+        console.error('debug.jsonファイル生成エラー:', blobError);
       }
       
-      debugLink.href = url;
-      debugLink.download = 'debug.json';
-    } catch (blobError) {
-      console.error('debug.jsonファイル生成エラー:', blobError);
-    }
-    
-    // 自動保存の条件チェック
-    const currentTime = Date.now();
-    const timeSinceLastSave = currentTime - lastDebugSaveTime;
-    const newLogCount = debugData.logs.length - lastDebugLogCount;
-    
-    // 保存条件:
-    // 1. 100件ごと
-    // 2. 最後の保存から5分以上経過 かつ 新しいログがある
-    const shouldSave100 = debugData.logs.length % 100 === 0;
-    const shouldSave5min = timeSinceLastSave >= 5 * 60 * 1000 && newLogCount > 0;
-    
-    if (shouldSave100) {
-      console.log(`[saveDebugToJson] 100件到達: debug.json自動保存を実行`);
-      autoSaveDebugJson(debugData);
-    } else if (shouldSave5min) {
-      console.log(`[saveDebugToJson] 5分経過 & 新規ログあり: debug.json自動保存を実行`);
-      autoSaveDebugJson(debugData);
-    }
-    
-    // 定期的に保存状況をログ出力（10件ごと）
-    if (debugData.logs.length % 10 === 0) {
-      console.log(`[saveDebugToJson] ログ数: ${debugData.logs.length}件, ファイルハンドル: ${fileHandles.debug ? '設定済み' : '未設定'}`);
-      if (!fileHandles.debug) {
-        console.log(`[saveDebugToJson] ヒント: 「⚙️ 設定」→「📁 ファイルハンドルを設定」で自動保存を有効化できます`);
+      // 自動保存の条件チェック
+      const currentTime = Date.now();
+      const timeSinceLastSave = currentTime - lastDebugSaveTime;
+      const newLogCount = debugData.logs.length - lastDebugLogCount;
+      
+      // 保存条件:
+      // 1. 100件ごと
+      // 2. 最後の保存から5分以上経過 かつ 新しいログがある
+      const shouldSave100 = debugData.logs.length % 100 === 0;
+      const shouldSave5min = timeSinceLastSave >= 5 * 60 * 1000 && newLogCount > 0;
+      
+      if (shouldSave100) {
+        console.log(`[saveDebugToJson] 100件到達: debug.json自動保存を実行`);
+        autoSaveDebugJson(debugData);
+      } else if (shouldSave5min) {
+        console.log(`[saveDebugToJson] 5分経過 & 新規ログあり: debug.json自動保存を実行`);
+        autoSaveDebugJson(debugData);
       }
+      
+      // 定期的に保存状況をログ出力（10件ごと）
+      if (debugData.logs.length % 10 === 0) {
+        console.log(`[saveDebugToJson] ログ数: ${debugData.logs.length}件, ファイルハンドル: ${fileHandles.debug ? '設定済み' : '未設定'}`);
+        if (!fileHandles.debug) {
+          console.log(`[saveDebugToJson] ヒント: 「⚙️ 設定」→「高度な設定」→「📁 ファイルハンドルを設定」で自動保存を有効化できます`);
+        }
+      }
+    } else {
+      // HTTP/HTTPSプロトコル: localStorageキャッシュのみに保存（ファイル保存なし）
+      // デバッグモードOFF時はshowDebugInfoが呼ばれないため、この処理は実行されない
+      console.log(`[saveDebugToJson] HTTP/HTTPSプロトコル: localStorageキャッシュのみに保存`);
     }
     
   } catch (error) {
@@ -3077,6 +3570,20 @@ function saveDebugToJson(message) {
 // debug.jsonを自動保存する関数
 async function autoSaveDebugJson(debugData) {
   try {
+    // デバッグモードOFF時は保存しない
+    if (!debugMode) {
+      console.log(`[autoSaveDebugJson] デバッグモードOFF: 保存をスキップ`);
+      return;
+    }
+    
+    const protocol = window.location.protocol;
+    
+    // HTTP/HTTPSプロトコルの場合はファイル保存をスキップ（localStorageキャッシュのみ）
+    if (protocol === 'https:' || protocol === 'http:') {
+      console.log(`[autoSaveDebugJson] HTTP/HTTPSプロトコル: ファイル保存をスキップ（localStorageキャッシュに保存済み）`);
+      return;
+    }
+    
     let fileHandle = fileHandles.debug;
     
     // ファイルハンドルがない場合は取得を試みる
@@ -3097,7 +3604,7 @@ async function autoSaveDebugJson(debugData) {
       // file://プロトコルの場合は、ファイルハンドルの設定を促す
       if (window.location.protocol === 'file:') {
         console.log(`[autoSaveDebugJson] file://プロトコル: setupAllFileHandles()での設定を推奨`);
-        console.log(`[autoSaveDebugJson] ヒント: 「⚙️ 設定」→「📁 ファイルハンドルを設定」で設定してください`);
+        console.log(`[autoSaveDebugJson] ヒント: 「⚙️ 設定」→「高度な設定」→「📁 ファイルハンドルを設定」で設定してください`);
         return;
       }
       
@@ -3142,99 +3649,38 @@ async function autoSaveDebugJson(debugData) {
 // 既存のdebug.jsonファイルを読み込んで内容をマージする関数
 async function loadExistingDebugJson() {
   try {
-    // File System Access APIのサポート確認
-    if (!window.showOpenFilePicker) {
-      showDebugInfo(`File System Access APIがサポートされていないため、既存のdebug.jsonファイルの読み込みをスキップします`);
+    // デバッグモードOFF時は読み込まない
+    if (!debugMode) {
+      console.log(`[loadExistingDebugJson] デバッグモードOFF: スキップ`);
       return;
     }
     
-    // HTTPプロトコルの場合のみfetchを試行
-    if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:') {
-      showDebugInfo(`file://プロトコル: 既存のdebug.jsonファイルの読み込みをスキップ（File System Access API使用）`);
-      return;
-    }
+    const protocol = window.location.protocol;
     
-    try {
-      showDebugInfo(`既存のdebug.jsonファイルを読み込み中...`);
-      const response = await fetch('./debug.json');
-      
-      if (response.ok) {
-        const content = await response.text();
-        
-        // 空のファイルの場合は新しいデータ構造を作成
-        if (!content || content.trim().length === 0) {
-          showDebugInfo(`debug.jsonが空です: 新しいデータ構造を作成します`);
-          localStorage.setItem('debugData', JSON.stringify({ logs: [] }));
-          return;
-        }
-        
-        showDebugInfo(`既存のdebug.jsonファイルを発見: ${content.length}文字`);
-        
-        let existingDebugData = { logs: [] };
-        try {
-          existingDebugData = JSON.parse(content);
-        } catch (parseError) {
-          showDebugInfo(`debug.jsonのJSON解析エラー: ${parseError.message}`);
-          showDebugInfo(`新しいデータ構造を作成します`);
-          existingDebugData = { logs: [] };
-        }
-        
-        // データ構造の検証
-        if (!existingDebugData.logs || !Array.isArray(existingDebugData.logs)) {
-          showDebugInfo(`debug.jsonの構造が無効です: 新しい構造を作成`);
-          existingDebugData = { logs: [] };
-        }
-        
-        showDebugInfo(`既存のdebug.jsonから${existingDebugData.logs.length}件のログを読み込みました`);
-        
-        // localStorageの既存データとマージ
-        let currentDebugData = { logs: [] };
-        try {
-          const currentData = localStorage.getItem('debugData');
-          if (currentData) {
-            currentDebugData = JSON.parse(currentData);
-            if (!currentDebugData.logs || !Array.isArray(currentDebugData.logs)) {
-              currentDebugData = { logs: [] };
-            }
-          }
-        } catch (e) {
-          // 既存データの読み込みに失敗した場合は新しいデータを作成
-          currentDebugData = { logs: [] };
-        }
-        
-        // 既存のdebug.jsonのログを現在のデータに追加
-        const mergedLogs = [...existingDebugData.logs, ...currentDebugData.logs];
-        
-        // 重複を除去（同じtimestampとmessageの組み合わせ）
-        const uniqueLogs = mergedLogs.filter((log, index, self) => 
-          index === self.findIndex(l => l.timestamp === log.timestamp && l.message === log.message)
-        );
-        
-        // タイムスタンプでソート
-        uniqueLogs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-        
-        // ログの最大数を制限（最新1000件）
-        const finalLogs = uniqueLogs.length > 1000 ? uniqueLogs.slice(-1000) : uniqueLogs;
-        
-        const mergedDebugData = { logs: finalLogs };
-        
-        // localStorageに保存
-        localStorage.setItem('debugData', JSON.stringify(mergedDebugData));
-        showDebugInfo(`既存のdebug.jsonと現在のデータをマージしました: ${finalLogs.length}件のログ`);
-        
+    // HTTP/HTTPSプロトコルの場合はlocalStorageキャッシュから読み込み
+    if (protocol === 'https:' || protocol === 'http:') {
+      const existingData = localStorage.getItem('debugData');
+      if (existingData && existingData.trim().length > 0) {
+        console.log(`[loadExistingDebugJson] HTTP/HTTPSプロトコル: localStorageキャッシュからデバッグデータを読み込みました`);
       } else {
-        showDebugInfo(`既存のdebug.jsonファイルが見つかりません: ${response.status}`);
-        // 新しいデータ構造を作成
-        localStorage.setItem('debugData', JSON.stringify({ logs: [] }));
+        console.log(`[loadExistingDebugJson] HTTP/HTTPSプロトコル: localStorageキャッシュにデバッグデータがありません`);
       }
-    } catch (fetchError) {
-      showDebugInfo(`既存のdebug.jsonファイルの読み込みエラー: ${fetchError.message}`);
-      // 新しいデータ構造を作成
-      localStorage.setItem('debugData', JSON.stringify({ logs: [] }));
+      return;
     }
+    
+    // file://プロトコルの場合はFile System Access API使用（デバッグモードON時のみここに到達）
+    if (protocol === 'file:') {
+      console.log(`[loadExistingDebugJson] file://プロトコル: 既存のdebug.jsonファイルの読み込みをスキップ（File System Access API使用）`);
+      return;
+    }
+    
+    // それ以外のプロトコルは処理なし（HTTP/HTTPSは上記で処理済み）
+    console.log(`[loadExistingDebugJson] プロトコル ${protocol}: 処理をスキップ`);
     
   } catch (error) {
-    showDebugInfo(`既存のdebug.jsonファイル読み込み処理エラー: ${error.message}`);
+    if (debugMode) {
+      showDebugInfo(`既存のdebug.jsonファイル読み込み処理エラー: ${error.message}`);
+    }
     // エラーが発生してもアプリケーションの動作を停止させない
   }
 }
@@ -3640,6 +4086,8 @@ function getCurrentWordbookHash() {
   return hashString(allWords.map(w => w.question + w.answer).join(''));
 }
 
+let autoLoadCsvAttempted = false; // 自動読み込み試行済みフラグ
+
 async function showMenuScreen() {
   document.getElementById('menuScreen').style.display = 'block';
   document.getElementById('mainContent').style.display = 'none';
@@ -3658,26 +4106,13 @@ async function showMenuScreen() {
   const historyDiv = document.getElementById('historyList');
   historyDiv.innerHTML = '';
   
-  // 単語帳が一つもない場合は、同じフォルダ内のCSVファイルを自動読み込み
+  // 単語帳が一つもない場合
   if (list.length === 0) {
-    showDebugInfo('単語帳の履歴がありません: 同じフォルダ内のCSVファイルを自動検出します');
-    
-    // CSVファイルの自動検出を試行
-    await autoLoadCsvFilesFromFolder();
-    
-    // 再度履歴を取得
-    const updatedList = await getHistoryList();
-    if (updatedList.length === 0) {
-      // それでも履歴がない場合
-      historyDiv.innerHTML = '<div>履歴はありません</div>';
-    } else {
-      // 自動読み込み後に履歴を表示
-      showDebugInfo(`自動読み込み完了: ${updatedList.length}件の単語帳を追加しました`);
-      // 履歴リストを再描画するため、関数を再帰呼び出し
-      await showMenuScreen();
-      return;
-    }
+    // 履歴が空の場合は何も表示しない（起動時のdata.csv読み込みに任せる）
+    historyDiv.innerHTML = '';
   } else {
+    // フラグをリセット（次のセッションで再実行できるように）
+    autoLoadCsvAttempted = false;
     list.forEach(entry => {
       const entryDiv = document.createElement('div');
       entryDiv.className = 'history-entry';

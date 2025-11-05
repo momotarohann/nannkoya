@@ -12,7 +12,7 @@
       <span id="appTitle">単語帳アプリ</span>
     </div>
     <div id="topBarRight">
-      <label class="topBarBtn"><input type="file" id="fileInput" accept=".csv" style="display:none;"><span id="fileInputLabel">📁 ファイル選択</span></label>
+      <label class="topBarBtn"><input type="file" id="fileInput" accept=".csv" multiple style="display:none;"><span id="fileInputLabel">📁 ファイル選択</span></label>
       <button id="backToMenuBtn" class="topBarBtn">🏠 メニューに戻る</button>
       <button id="settingsBtn" class="topBarBtn">⚙️ 設定</button>
       <button id="globalStatsBtn" class="topBarBtn">📊 全体統計</button>
@@ -215,28 +215,6 @@
         </div>
       </div>
       
-      <!-- ファイル自動保存設定 -->
-      <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:15px;">
-        <h4 style="margin-top:0; color:#9b59b6;">📁 ファイル自動保存</h4>
-        <p style="font-size:14px; color:#666; margin:10px 0;">
-          JSONファイルへの自動保存を設定します。<br>
-          file://プロトコルで使用する場合は必須です。
-        </p>
-        <div id="fileHandleStatus" style="padding:10px; background:#e8f5e9; border-radius:4px; margin-bottom:10px; display:none;">
-          <p style="margin:5px 0; color:#27ae60; font-weight:bold;">✅ ファイルハンドル設定済み</p>
-          <p style="margin:5px 0; font-size:12px; color:#666;">データは自動的に保存されます</p>
-        </div>
-        <button id="setupFilesBtn" style="background:#9b59b6; color:white; padding:10px 20px; border:none; border-radius:5px; cursor:pointer; width:100%; margin-bottom:10px;">
-          📁 ファイルハンドルを設定
-        </button>
-        <button id="resetFileHandlesBtn" style="background:#e74c3c; color:white; padding:8px 16px; border:none; border-radius:5px; cursor:pointer; width:100%; font-size:12px;">
-          🔄 設定をリセット
-        </button>
-        <p style="font-size:12px; color:#999; margin-top:10px;">
-          5つのJSONファイル（progress, settings, sessions, data, debug）を順番に選択します
-        </p>
-      </div>
-      
       <!-- データ管理 -->
       <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:15px;">
         <h4 style="margin-top:0; color:#e74c3c;">🗑️ データ管理</h4>
@@ -255,6 +233,30 @@
           <button id="hideAdvancedBtn" style="background:#95a5a6; color:white; padding:6px 12px; border:none; border-radius:4px; cursor:pointer; font-size:12px;">
             🔒 非表示にする
           </button>
+        </div>
+        
+        <!-- ファイル自動保存設定 -->
+        <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:15px;">
+          <h4 style="margin-top:0; color:#9b59b6;">📁 ファイル自動保存</h4>
+          <p style="font-size:14px; color:#666; margin:10px 0;">
+            JSONファイルへの自動保存を設定します。<br>
+            <strong>file://プロトコル:</strong> 必須（ファイルハンドル設定）<br>
+            <strong>https://プロトコル:</strong> localStorageに自動保存<br>
+            <strong>http://プロトコル:</strong> ファイルハンドル設定推奨
+          </p>
+          <div id="fileHandleStatus" style="padding:10px; background:#e8f5e9; border-radius:4px; margin-bottom:10px; display:none;">
+            <p style="margin:5px 0; color:#27ae60; font-weight:bold;">✅ ファイルハンドル設定済み</p>
+            <p style="margin:5px 0; font-size:12px; color:#666;">データは自動的に保存されます</p>
+          </div>
+          <button id="setupFilesBtn" style="background:#9b59b6; color:white; padding:10px 20px; border:none; border-radius:5px; cursor:pointer; width:100%; margin-bottom:10px;">
+            📁 ファイルハンドルを設定
+          </button>
+          <button id="resetFileHandlesBtn" style="background:#e74c3c; color:white; padding:8px 16px; border:none; border-radius:5px; cursor:pointer; width:100%; font-size:12px;">
+            🔄 設定をリセット
+          </button>
+          <p style="font-size:12px; color:#999; margin-top:10px;">
+            5つのJSONファイル（progress, settings, sessions, data, debug）を順番に選択します
+          </p>
         </div>
         
         <!-- デバッグモード設定 -->
